@@ -11,7 +11,10 @@ import soundfile as sf
 import tqdm
 import numpy as np
 import torch
-from moviepy.editor import VideoFileClip
+try:
+    from moviepy import VideoFileClip
+except ImportError:
+    from moviepy.editor import VideoFileClip
 from sklearn.model_selection import train_test_split
 
 
@@ -64,6 +67,7 @@ def preprocess_IEMOCAP(args):
 
     samples = []
     labels = []
+    session_samples = {sid: [] for sid in session_id}
     iemocap2label = LABEL_MAP
     iemocap2label.update({"exc": 1})
 
@@ -121,6 +125,20 @@ def preprocess_IEMOCAP(args):
                                         raise Exception
                             samples.append((wav_path, text, emo))
                             labels.append(emo)
+                            session_samples[sess_id].append((wav_path, text, emo))
+
+    output_dir = args.dataset + "_preprocessed"
+    os.makedirs(output_dir, exist_ok=True)
+
+    if args.cross_val:
+        # Save per-session pkl files for leave-one-session-out cross-validation
+        for sid, sess_data in session_samples.items():
+            with open(os.path.join(output_dir, f"session_{sid}.pkl"), "wb") as f:
+                pickle.dump(sess_data, f)
+            logging.info(f"Session {sid} samples: {len(sess_data)}")
+        logging.info(f"Saved session files to {output_dir}")
+        logging.info("Preprocessing for cross-validation finished successfully")
+        return
 
     # Shuffle and split
     temp = list(zip(samples, labels))
@@ -133,18 +151,17 @@ def preprocess_IEMOCAP(args):
         train, train_labels, test_size=0.1, random_state=args.seed
     )
     # Save data
-    os.makedirs(args.dataset + "_preprocessed", exist_ok=True)
-    with open(os.path.join(args.dataset + "_preprocessed", "train.pkl"), "wb") as f:
+    with open(os.path.join(output_dir, "train.pkl"), "wb") as f:
         pickle.dump(train_samples, f)
-    with open(os.path.join(args.dataset + "_preprocessed", "val.pkl"), "wb") as f:
+    with open(os.path.join(output_dir, "val.pkl"), "wb") as f:
         pickle.dump(val_samples, f)
-    with open(os.path.join(args.dataset + "_preprocessed", "test.pkl"), "wb") as f:
+    with open(os.path.join(output_dir, "test.pkl"), "wb") as f:
         pickle.dump(test_samples, f)
 
     logging.info(f"Train samples: {len(train_samples)}")
     logging.info(f"Val samples: {len(val_samples)}")
     logging.info(f"Test samples: {len(test_samples)}")
-    logging.info(f"Saved to {args.dataset + '_preprocessed'}")
+    logging.info(f"Saved to {output_dir}")
     logging.info("Preprocessing finished successfully")
 
 
@@ -319,6 +336,11 @@ def arg_parser():
     )
     parser.add_argument("--all_classes", action="store_true")
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument(
+        "--cross_val",
+        action="store_true",
+        help="(IEMOCAP only) Save per-session pkl files for leave-one-session-out cross-validation",
+    )
     parser.add_argument(
         "--ignore_length",
         type=int,
